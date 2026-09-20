@@ -9,8 +9,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the app source code
+# Copy the app source code and alembic files
 COPY app ./app
+COPY alembic.ini .
+COPY alembic ./alembic
 
 # Change ownership
 RUN chown -R appuser:appuser /app
@@ -20,4 +22,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.api.main:app --host 0.0.0.0 --port 8000"]
