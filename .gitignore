@@ -7,4 +7,5 @@ env/
 .pytest_cache/
 .vscode/
 .idea/
-.en
+
+kb_chunks_pre_hnsw.dump
