@@ -10,8 +10,8 @@ class KBChunk(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     content = Column(Text, nullable=False)
-    # Using 1536 dimension for text-embedding-3-small assumption
-    embedding = Column(Vector(1536), nullable=False)
+    # Using 384 dimension for BAAI/bge-small-en-v1.5
+    embedding = Column(Vector(384), nullable=False)
     source_name = Column(Text, nullable=False)
     document_title = Column(Text)
     chunk_index = Column(Integer, nullable=False)
