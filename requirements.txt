@@ -14,3 +14,4 @@ feedparser==6.0.11
 beautifulsoup4==4.12.3
 sentence-transformers==3.0.1
 pgvector==0.2.5
+tenacity==8.3.0
