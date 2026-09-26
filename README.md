@@ -8,7 +8,7 @@ A retrieval-augmented research system with local embeddings, multi-source ingest
 - **Phase 2** — PostgreSQL + pgvector schema: ✅ complete
 - **Phase 3** — Data ingestion pipeline: ✅ complete
 - **Phase 4** — LLM connectivity: ✅ complete
-- **Phase 5** — MCP tool servers: ⏳ pending
+- **Phase 5** — MCP tool servers: ✅ complete
 - **Phase 6** — Build agents individually: ⏳ pending
 - **Phase 7** — Wire agents into LangGraph: ⏳ pending
 
@@ -20,6 +20,7 @@ A retrieval-augmented research system with local embeddings, multi-source ingest
 | Embedding | `BAAI/bge-small-en-v1.5` (local, 384-dim, no API calls) |
 | Storage | PostgreSQL 16 + pgvector |
 | Vector index | HNSW with cosine distance |
+| Tools | web_search (Tavily API), calculator (simpleeval), db_lookup (pgvector similarity search) |
 | API | FastAPI + Uvicorn |
 | Container | Docker Compose (migrate / api / db services) |
 

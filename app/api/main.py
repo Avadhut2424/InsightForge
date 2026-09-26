@@ -6,6 +6,9 @@ from app.core.llm.exceptions import LLMError
 
 app = FastAPI(title="InsightForge AI API")
 
+from app.mcp_servers.run_servers import router as mcp_router
+app.include_router(mcp_router)
+
 @app.get("/health", summary="Health Check")
 async def health_check():
     return {"status": "ok", "env": settings.app_env}
