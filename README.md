@@ -7,7 +7,10 @@ A retrieval-augmented research system with local embeddings, multi-source ingest
 - **Phase 1** — Environment & Skeleton: ✅ complete
 - **Phase 2** — PostgreSQL + pgvector schema: ✅ complete
 - **Phase 3** — Data ingestion pipeline: ✅ complete
-- **Phase 4** — Agent layer: ⏳ pending
+- **Phase 4** — LLM connectivity: ✅ complete
+- **Phase 5** — MCP tool servers: ⏳ pending
+- **Phase 6** — Build agents individually: ⏳ pending
+- **Phase 7** — Wire agents into LangGraph: ⏳ pending
 
 ## Architecture
 
