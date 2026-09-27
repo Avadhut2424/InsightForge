@@ -21,7 +21,10 @@ class LLMResponse:
     latency_ms: float
 
 # Initialize a single AsyncOpenAI client reusing the connection
-client = AsyncOpenAI(api_key=settings.openai_api_key)
+if settings.llm_provider.lower() == "ollama":
+    client = AsyncOpenAI(api_key="ollama", base_url=settings.ollama_base_url)
+else:
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 def is_transient_error(e: BaseException) -> bool:
     """Return True if the error is transient and should be retried."""

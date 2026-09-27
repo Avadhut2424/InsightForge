@@ -9,7 +9,7 @@ A retrieval-augmented research system with local embeddings, multi-source ingest
 - **Phase 3** — Data ingestion pipeline: ✅ complete
 - **Phase 4** — LLM connectivity: ✅ complete
 - **Phase 5** — MCP tool servers: ✅ complete
-- **Phase 6** — Build agents individually: ⏳ pending
+- **Phase 6** — Build agents individually: ✅ complete
 - **Phase 7** — Wire agents into LangGraph: ⏳ pending
 
 ## Architecture
@@ -20,6 +20,7 @@ A retrieval-augmented research system with local embeddings, multi-source ingest
 | Embedding | `BAAI/bge-small-en-v1.5` (local, 384-dim, no API calls) |
 | Storage | PostgreSQL 16 + pgvector |
 | Vector index | HNSW with cosine distance |
+| LLM Provider | Configurable via `LLM_PROVIDER` in `.env` (Ollama local or OpenAI) |
 | Tools | web_search (Tavily API), calculator (simpleeval), db_lookup (pgvector similarity search) |
 | API | FastAPI + Uvicorn |
 | Container | Docker Compose (migrate / api / db services) |
