@@ -4,30 +4,15 @@ from typing import Dict, Any, List
 from app.agents.base import Agent, Task, MemoryStore
 from app.core.llm.client import call_llm
 
-def get_critical_tokens(txt: str):
-    toks = set()
-    clean_txt = txt.replace(",", "")
-    toks.update(re.findall(r'\b\d+\b', clean_txt))
-    toks.update(a.lower() for a in re.findall(r'\b[A-Z]{2,}\b', txt))
-    toks.update(p.lower() for p in re.findall(r'\b[A-Z][a-z]+\b', txt))
-    special = {'not', 'no', 'never', 'without', 'cannot', 'may', 'might', 'will', 'expects', 'could'}
-    for w in re.findall(r'\b\w+\b', txt.lower()):
-        if w in special:
-            toks.add(w)
-    if re.search(r"n't\b", txt.lower()):
-        toks.add("not")
-    return toks
-
-def has_neg(txt: str):
-    neg_words = {'not', 'no', 'never', 'without', 'cannot'}
-    if re.search(r"n't\b", txt.lower()):
-        return True
-    return any(w in neg_words for w in re.findall(r'\b\w+\b', txt.lower()))
+def split_sentences(text: str) -> List[str]:
+    # Basic sentence splitter
+    text = re.sub(r'\\s+', ' ', text).strip()
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9])', text)
+    return [s.strip() for s in sentences if s.strip()]
 
 class SynthesizerAgent(Agent):
     """
-    Takes a topic/sub-question and a set of retrieved evidence chunks,
-    and synthesizes them into a readable draft report section.
+    Selects relevant sentences from evidence and assembles them into a grounded draft.
     """
     async def run(self, task: Task, memory: MemoryStore) -> str:
         data = task.input_data
@@ -36,31 +21,39 @@ class SynthesizerAgent(Agent):
             
         topic = data["topic"]
         evidence_chunks = data["evidence"]
+        revision_reason = data.get("revision", None)
         
-        evidence_text = ""
-        chunk_map = {}
-        for i, chunk in enumerate(evidence_chunks):
-            chunk_id = f"chunk_{i+1}"
-            title = chunk.get("title", "Unknown Source")
+        sentence_map = {}
+        numbered_sentences_text = ""
+        
+        for c_idx, chunk in enumerate(evidence_chunks):
+            chunk_num = c_idx + 1
+            title = chunk.get("title", f"Source {chunk_num}")
             content = chunk.get("content", chunk.get("snippet", ""))
-            chunk_map[chunk_id] = content
-            evidence_text += f"--- {chunk_id} ({title}) ---\\n{content}\\n\\n"
             
+            sentences = split_sentences(content)
+            for s_idx, sentence in enumerate(sentences):
+                s_id = f"c{chunk_num}-s{s_idx+1}"
+                sentence_map[s_id] = {
+                    "text": sentence,
+                    "citation": title
+                }
+                numbered_sentences_text += f"[{s_id}] {sentence}\\n"
+                
         prompt = (
-            f"You are a strict, evidence-based research writer. Write a coherent draft report section "
-            f"addressing the following topic, using ONLY the provided evidence.\\n\\n"
-            f"Topic: {topic}\\n\\n"
+            f"You are a strict, evidence-based research writer. Your task is to select the most relevant sentences "
+            f"that directly help answer the sub-question. You MUST NOT write any text yourself.\\n\\n"
+            f"Sub-question: {topic}\\n\\n"
+        )
+        if revision_reason:
+            prompt += f"NOTE: This is a revision. The previous draft was rejected for this reason: {revision_reason}. Select sentences that address this issue.\\n\\n"
+            
+        prompt += (
+            f"Available Sentences:\\n{numbered_sentences_text}\\n\\n"
             f"CRITICAL RULES:\\n"
-            f"1. You MUST NOT introduce any claims, facts, statistics, or general knowledge that is absent from the provided evidence.\\n"
-            f"2. Every single sentence you write must be directly traceable to a specific piece of evidence.\\n"
-            f"3. You MUST output your response ONLY as a JSON list of objects. Do not wrap it in markdown block quotes. Each object represents one sentence in your draft and must have:\\n"
-            f"   - 'sentence': The text of the sentence.\\n"
-            f"   - 'chunk_id': The ID of the chunk that supports it (e.g. 'chunk_1'). If unsupported, use null.\\n"
-            f"   - 'quote': A literal, verbatim substring from the chunk (max 250 chars) that proves the sentence.\\n"
-            f"4. Synthesize the evidence smoothly rather than just listing it.\\n\\n"
-            f"Evidence:\\n"
-            f"{evidence_text}\\n\\n"
-            f"Output JSON only:"
+            f"1. Select a maximum of 6 sentence IDs that best answer the question, in a logical order.\\n"
+            f"2. You MUST output ONLY a JSON list of strings (the sentence IDs, e.g. [\"c1-s3\", \"c2-s1\"]).\\n"
+            f"3. Do not include markdown formatting or explanation.\\n"
         )
         
         response = await call_llm(role="writer", prompt=prompt)
@@ -69,50 +62,25 @@ class SynthesizerAgent(Agent):
             text = text[7:]
         if text.endswith("```"):
             text = text[:-3]
-        
+            
         try:
-            draft_items = json.loads(text)
-        except json.JSONDecodeError:
-            return "Error: Synthesizer did not output valid JSON."
+            selected_ids = json.loads(text.strip())
+            if not isinstance(selected_ids, list):
+                selected_ids = []
+        except Exception:
+            selected_ids = []
             
-        final_draft = []
-        for item in draft_items:
-            sentence = item.get("sentence", "")
-            chunk_id = item.get("chunk_id")
-            quote = item.get("quote", "")
+        valid_selections = []
+        for s_id in selected_ids:
+            if s_id in sentence_map:
+                valid_selections.append(s_id)
+                
+        if len(valid_selections) < 2:
+            return "The provided evidence does not contain enough information to fully address this topic."
             
-            is_supported = True
-            if not chunk_id or chunk_id not in chunk_map:
-                is_supported = False
-            else:
-                chunk_content = chunk_map[chunk_id]
-                normalized_quote = re.sub(r'\\s+', '', str(quote).lower())
-                normalized_content = re.sub(r'\\s+', '', chunk_content.lower())
-                
-                if not quote or normalized_quote not in normalized_content:
-                    is_supported = False
-                elif len(str(quote)) > 250:
-                    is_supported = False
-                else:
-                    stripped_quote = re.sub(r'\\([^)]*\\)', '', str(quote))
-                    sent_tokens = get_critical_tokens(sentence)
-                    quote_lower = stripped_quote.lower()
-                    quote_clean = quote_lower.replace(",", "")
-                    
-                    for t in sent_tokens:
-                        if t not in quote_clean and t not in quote_lower:
-                            if t.endswith('s') and t[:-1] in quote_lower:
-                                continue
-                            is_supported = False
-                            break
-                            
-                    if is_supported:
-                        if has_neg(sentence) != has_neg(stripped_quote):
-                            is_supported = False
-                            
-            if is_supported:
-                final_draft.append(sentence)
-            else:
-                final_draft.append(f"[UNSUPPORTED: {sentence}]")
-                
-        return " ".join(final_draft)
+        draft_parts = []
+        for s_id in valid_selections:
+            item = sentence_map[s_id]
+            draft_parts.append(f"{item['text']} ({item['citation']}).")
+            
+        return " ".join(draft_parts)
