@@ -2,7 +2,9 @@ import asyncio
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
 from app.agents.base import Task, MemoryStore
 from app.agents.retriever import RetrieverAgent

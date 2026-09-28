@@ -118,3 +118,12 @@ async def call_llm(
         output_tokens=response.usage.completion_tokens if response.usage else 0,
         latency_ms=latency_ms
     )
+
+
+async def warm_up_llm() -> LLMResponse:
+    """
+    Execute a minimal LLM call to ensure local model weights are loaded into memory.
+    Eliminates cold-start latency for subsequent pipeline passes.
+    """
+    return await call_llm(role="default", prompt="Hello", max_tokens=5)
+

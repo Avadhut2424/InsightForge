@@ -140,17 +140,22 @@ class SynthesizerAgent(Agent):
                 
         if len(valid_selections) < 2:
             draft = "The provided evidence does not contain enough information to fully address this topic."
+            sentences = []
         else:
             draft_parts = []
+            sentences = []
             for s_id in valid_selections:
                 item = sentence_map[s_id]
                 draft_parts.append(f"{item['text']} ({item['citation']}).")
+                sentences.append({
+                    "sentence": item["text"],
+                    "citation": item["citation"]
+                })
             draft = " ".join(draft_parts)
 
-        if data.get("return_details", False):
-            return {
-                "draft": draft,
-                "selected_ids": valid_selections
-            }
-            
-        return draft
+        return {
+            "draft": draft,
+            "sentences": sentences,
+            "selected_ids": valid_selections
+        }
+

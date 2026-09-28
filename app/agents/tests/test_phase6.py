@@ -3,14 +3,16 @@ import json
 import os
 import sys
 
-# Ensure app is in path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# Ensure repo root is in path
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
 from app.agents.critic import CriticAgent
 from app.agents.base import Task, MemoryStore
 
 async def main():
-    fixture_path = "app/agents/test_fixtures/sample_retrieval.json"
+    fixture_path = os.path.join(repo_root, "app", "agents", "test_fixtures", "sample_retrieval.json")
     if not os.path.exists(fixture_path):
         print(f"Fixture {fixture_path} not found.")
         sys.exit(1)

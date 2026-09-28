@@ -27,3 +27,27 @@ LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
 OLLAMA_MODEL=llama3.1-8k
 ```
+
+## Model Keep-Alive Recommendation
+
+By default, Ollama unloads models from memory after 5 minutes of inactivity, which causes subsequent requests to incur significant "cold-start" loading latency (tens of seconds).
+
+To keep the model resident in memory across pipeline passes, set the `OLLAMA_KEEP_ALIVE` environment variable on the host running the Ollama service:
+
+- **Windows (PowerShell)**:
+  ```powershell
+  [System.Environment]::SetEnvironmentVariable('OLLAMA_KEEP_ALIVE', '30m', 'User')
+  ```
+  Or launch the Ollama service with:
+  ```powershell
+  $env:OLLAMA_KEEP_ALIVE="30m"; ollama serve
+  ```
+- **Linux / macOS**:
+  ```bash
+  export OLLAMA_KEEP_ALIVE="30m"
+  # Or configure systemd override:
+  # Environment="OLLAMA_KEEP_ALIVE=30m"
+  ```
+
+Additionally, a warm-up call (`warm_up_llm()`) should be executed during application startup to preemptively load weights before user queries arrive.
+

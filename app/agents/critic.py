@@ -11,42 +11,62 @@ class CriticAgent(Agent):
     """
     async def run(self, task: Task, memory: MemoryStore) -> Dict[str, Any]:
         data = task.input_data
-        if not isinstance(data, dict) or "draft" not in data or "evidence" not in data:
-            raise ValueError("CriticAgent expects input_data to be a dict with 'draft' and 'evidence'")
+        if not isinstance(data, dict) or ("draft" not in data and "sentences" not in data) or "evidence" not in data:
+            raise ValueError("CriticAgent expects input_data to be a dict with 'draft' (or 'sentences') and 'evidence'")
             
-        draft = data["draft"]
+        draft_input = data.get("draft")
         evidence_chunks = data.get("evidence", [])
-        
-        # We need the sub-question topic for the completeness check
         topic = data.get("topic", "the sub-question")
         
-        # a) Literal substring check
+        # Priority 1: Direct 'sentences' list in data or inside draft dict/list
+        sentence_items = []
+        if "sentences" in data and isinstance(data["sentences"], list):
+            sentence_items = data["sentences"]
+        elif isinstance(draft_input, dict) and "sentences" in draft_input and isinstance(draft_input["sentences"], list):
+            sentence_items = draft_input["sentences"]
+        elif isinstance(draft_input, list):
+            sentence_items = draft_input
+            
+        if sentence_items:
+            sentences_to_check = [
+                item["sentence"] if isinstance(item, dict) and "sentence" in item else str(item)
+                for item in sentence_items
+            ]
+            if isinstance(draft_input, dict) and "draft" in draft_input:
+                draft_text = str(draft_input["draft"])
+            else:
+                draft_text = " ".join(sentences_to_check)
+        else:
+            draft_text = str(draft_input or "")
+            sentences_to_check = []
+            if "The provided evidence does not contain enough information" not in draft_text:
+                raw_splits = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9])', draft_text.strip())
+                for s in raw_splits:
+                    s_clean = s.strip()
+                    if not s_clean or len(s_clean) < 15:
+                        continue
+                    # Strip citation at end of sentence if present (e.g. " (Source)."), keeping any internal parentheticals
+                    s_clean = re.sub(r'\s*\([A-Za-z0-9\s,\.\-–—\']+\)\.?$', '', s_clean).strip()
+                    sentences_to_check.append(s_clean)
+        
+        # a) Literal substring check (per sentence)
         unsupported_sentences = []
-        if "The provided evidence does not contain enough information" not in draft:
-            parts = draft.split("). ")
-            for part in parts:
-                if not part.strip():
+        if "The provided evidence does not contain enough information" not in draft_text:
+            for s_clean in sentences_to_check:
+                if not s_clean or len(s_clean) < 15:
                     continue
-                if part.endswith("."):
-                    part = part[:-1]
-                if part.endswith(")"):
-                    part = part[:-1]
-                    
-                raw_sentence = part.rsplit(" (", 1)[0].strip()
-                if not raw_sentence:
-                    continue
-                    
+                s_norm = re.sub(r'\s+', ' ', s_clean)
+                
                 found = False
                 for chunk in evidence_chunks:
                     content = chunk.get("content", chunk.get("snippet", ""))
-                    content_normalized = re.sub(r'\s+', ' ', content)
-                    raw_normalized = re.sub(r'\s+', ' ', raw_sentence)
-                    if raw_normalized in content_normalized:
+                    content_norm = re.sub(r'\s+', ' ', content)
+                    if s_norm in content_norm:
                         found = True
                         break
                         
                 if not found:
-                    unsupported_sentences.append(raw_sentence)
+                    unsupported_sentences.append(s_clean)
                     
         if unsupported_sentences:
             return {
@@ -56,32 +76,46 @@ class CriticAgent(Agent):
             
         # b) Completeness check via LLM
         prompt = (
-            f"Review the following draft report section and determine if it is on-topic and covers the main point of the sub-question.\n\n"
+            f"Evaluate if the following draft report section is on-topic and addresses the core sub-question.\n\n"
             f"Sub-question: {topic}\n\n"
-            f"Draft:\n{draft}\n\n"
-            f"CRITICAL RULES:\n"
-            f"1. A partial answer built from cited evidence is acceptable as long as the core of the sub-question is addressed. Do not reject a draft just because it lacks exhaustive detail.\n"
-            f"2. You MUST output your response ONLY as a JSON object.\n"
-            f"3. The JSON object must have exactly two keys:\n"
-            f"   - 'answers': true or false (boolean) depending on whether the draft covers the main thing the sub-question asks.\n"
-            f"   - 'missing': A short string phrase explaining what core aspect is missing, or null if nothing is missing.\n"
-            f"4. Do not wrap it in markdown block quotes. Output JSON only."
+            f"Draft:\n{draft_text}\n\n"
+            f"EVALUATION INSTRUCTIONS:\n"
+            f"1. Set 'answers' to true if the draft is on-topic and directly covers the main topic asked by the sub-question. A partial answer built from cited evidence is acceptable as long as the core is covered.\n"
+            f"2. Set 'answers' to false if the draft is off-topic, discusses a different subject, or contains only general background without addressing the main question.\n"
+            f"3. Return ONLY a JSON object with keys 'answers' (boolean) and 'missing' (string or null).\n"
+            f"Example valid JSON:\n"
+            f'{{"answers": true, "missing": null}}\n'
         )
         
-        response = await call_llm(role="critic", prompt=prompt)
+        response = await call_llm(
+            role="critic",
+            prompt=prompt,
+            response_format={"type": "json_object"}
+        )
         text = response.text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.endswith("```"):
-            text = text[:-3]
-            
+        
         try:
-            result = json.loads(text.strip())
-            answers = result.get("answers", False)
+            cleaned_text = text
+            if "```json" in cleaned_text:
+                cleaned_text = cleaned_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in cleaned_text:
+                cleaned_text = cleaned_text.split("```")[1].split("```")[0].strip()
+                
+            json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+            if json_match:
+                cleaned_text = json_match.group(0)
+                
+            result = json.loads(cleaned_text)
+            if not isinstance(result, dict) or "answers" not in result:
+                raise ValueError("critic output unparseable")
+                
+            answers = bool(result["answers"])
             missing = result.get("missing", None)
-        except json.JSONDecodeError:
-            answers = False
-            missing = "Critic failed to parse JSON output."
+        except Exception:
+            return {
+                "verdict": "revise",
+                "reason": "critic output unparseable"
+            }
             
         if answers:
             return {
@@ -89,7 +123,11 @@ class CriticAgent(Agent):
                 "reason": "Draft adequately answers the sub-question."
             }
         else:
+            reason_msg = "Draft fails to fully answer the sub-question."
+            if missing:
+                reason_msg += f" Missing aspect: {missing}"
             return {
                 "verdict": "revise",
-                "reason": f"Draft fails to fully answer the sub-question. Missing aspect: {missing}"
+                "reason": reason_msg
             }
+
