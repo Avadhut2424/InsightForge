@@ -26,6 +26,18 @@ logger = logging.getLogger(__name__)
 DISTANCE_CUTOFF = 0.255
 MIN_CHUNKS_UNDER_CUTOFF = 3
 MIN_CANDIDATE_SENTENCES = 2
+RELEVANCE_FLOOR = 0.50
+
+def truncate_at_sentence_boundary(text: str, max_chars: int = 1500) -> str:
+    """Truncates text at the last complete sentence boundary within max_chars."""
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    matches = list(re.finditer(r'[.!?][\'"”’\)\]]?(\s|$)', truncated))
+    if matches:
+        return truncated[:matches[-1].end()].strip()
+    return truncated
+
 
 async def planner_node(state: ResearchState) -> Dict[str, Any]:
     """Generates up to 3 sub-questions for the topic."""
@@ -142,7 +154,7 @@ async def retriever_node(state: ResearchState) -> Dict[str, Any]:
                     "id": s["id"],
                     "source": s.get("source"),
                     "title": s.get("title"),
-                    "content": content[:1500],
+                    "content": truncate_at_sentence_boundary(content, 1500),
                     "snippet": s.get("snippet"),
                     "distance": float(s.get("distance", 0.0))
                 })
@@ -252,19 +264,27 @@ async def synthesizer_node(state: ResearchState) -> Dict[str, Any]:
             if is_bad_sentence(sentence):
                 continue
                 
-            if starts_with_dangling_referent(sentence):
-                if s_idx > 0 and not is_bad_sentence(sentences[s_idx - 1]):
-                    final_text = f"{sentences[s_idx - 1]} {sentence}"
+            has_dangling = starts_with_dangling_referent(sentence)
+            prev_sentence = sentences[s_idx - 1] if s_idx > 0 and not is_bad_sentence(sentences[s_idx - 1]) else None
+            prev_id = f"c{chunk_num}-s{s_idx}" if s_idx > 0 else None
+            
+            if has_dangling:
+                if prev_sentence:
+                    display_text = f"{prev_sentence} {sentence}"
                 else:
                     continue
             else:
-                final_text = sentence
+                display_text = sentence
                 
             sentence_map[s_id] = {
-                "text": final_text,
+                "raw_text": sentence,
+                "display_text": display_text,
+                "has_dangling": has_dangling,
+                "prev_id": prev_id,
+                "prev_text": prev_sentence,
                 "citation": title
             }
-            candidates.append((s_id, final_text))
+            candidates.append((s_id, display_text))
             
     candidates = candidates[:25]
     numbered_sentences_text = "".join(f"[{s_id}] {text}\n" for s_id, text in candidates)
@@ -310,22 +330,72 @@ async def synthesizer_node(state: ResearchState) -> Dict[str, Any]:
     valid_selections = [s_id for s_id in selected_ids if s_id in sentence_map]
     
     if custom_draft is not None:
-        draft_sentences = custom_draft
-        assembled_text = " ".join(f"{item['sentence']} ({item['citation']})." for item in draft_sentences)
-    elif len(valid_selections) < 2:
-        draft_sentences = []
-        assembled_text = "The provided evidence does not contain enough information to fully address this topic."
+        initial_sentences = custom_draft
     else:
-        draft_sentences = [
-            {"sentence": sentence_map[s_id]["text"], "citation": sentence_map[s_id]["citation"]}
-            for s_id in valid_selections
+        # 1. Antecedent stitching: skip stitch if antecedent is already selected
+        initial_sentences = []
+        for s_id in valid_selections:
+            item = sentence_map[s_id]
+            if item["has_dangling"] and item["prev_text"]:
+                if item["prev_id"] in valid_selections:
+                    # Antecedent is already selected as its own item: skip stitch
+                    final_text = item["raw_text"]
+                else:
+                    final_text = f"{item['prev_text']} {item['raw_text']}"
+            else:
+                final_text = item["raw_text"]
+                
+            initial_sentences.append({
+                "sentence": final_text,
+                "citation": item["citation"],
+                "s_id": s_id
+            })
+
+    # 2. Never emit two selected items where one is a substring of the other
+    non_substring_sentences = []
+    for i, item_i in enumerate(initial_sentences):
+        norm_i = re.sub(r'\s+', ' ', item_i["sentence"]).strip().lower()
+        is_sub = False
+        for j, item_j in enumerate(initial_sentences):
+            if i != j:
+                norm_j = re.sub(r'\s+', ' ', item_j["sentence"]).strip().lower()
+                if norm_i in norm_j and len(norm_i) < len(norm_j):
+                    is_sub = True
+                    break
+        if not is_sub:
+            non_substring_sentences.append(item_i)
+            
+    # 3. Sentence-level relevance floor (0.50) using BAAI/bge-small-en-v1.5
+    from app.mcp_servers.db_lookup import get_embedding_model
+    import numpy as np
+    emb_model = get_embedding_model()
+    q_emb = emb_model.encode(sq, normalize_embeddings=True)
+    
+    surviving_sentences = []
+    for item in non_substring_sentences:
+        s_emb = emb_model.encode(item["sentence"], normalize_embeddings=True)
+        sim = float(np.dot(q_emb, s_emb))
+        if sim >= RELEVANCE_FLOOR:
+            item_copy = dict(item)
+            item_copy["relevance_score"] = sim
+            surviving_sentences.append(item_copy)
+            
+    if len(surviving_sentences) < 2:
+        sec["draft"] = []
+        sec["assembled_text"] = "Insufficient relevant evidence found above relevance floor."
+        sec["verdict"] = "revise"
+        sec["reason"] = f"Fewer than 2 sentences met relevance floor {RELEVANCE_FLOOR} (survived: {len(surviving_sentences)})"
+        sec["status"] = "insufficient_evidence"
+    else:
+        assembled_text = " ".join(f"{item['sentence']} ({item['citation']})." for item in surviving_sentences)
+        sec["draft"] = [
+            {"sentence": item["sentence"], "citation": item["citation"]}
+            for item in surviving_sentences
         ]
-        assembled_text = " ".join(f"{item['sentence']} ({item['citation']})." for item in draft_sentences)
+        sec["assembled_text"] = assembled_text
+        sec["status"] = "synthesized"
+        sec["selected_ids"] = [item.get("s_id") for item in surviving_sentences if item.get("s_id")]
         
-    sec["draft"] = draft_sentences
-    sec["assembled_text"] = assembled_text
-    sec["status"] = "synthesized"
-    sec["selected_ids"] = valid_selections
     sections[sq] = sec
     
     completed_at = datetime.utcnow()
@@ -337,7 +407,7 @@ async def synthesizer_node(state: ResearchState) -> Dict[str, Any]:
         started_at=started_at,
         completed_at=completed_at,
         input_summary={"sub_question": sq, "is_revision": is_revision},
-        output_summary={"selected_ids": valid_selections, "sentence_count": len(draft_sentences)}
+        output_summary={"selected_ids": valid_selections, "sentence_count": len(surviving_sentences)}
     )
     
     diff: Dict[str, Any] = {"sections": sections}
@@ -380,7 +450,7 @@ async def critic_node(state: ResearchState) -> Dict[str, Any]:
     else:
         critic = CriticAgent()
         res = await critic.run(Task(input_data={
-            "topic": sq_to_eval,
+            "sub_question": sq_to_eval,
             "sentences": sec.get("draft", []),
             "draft": sec.get("assembled_text", ""),
             "evidence": chunks

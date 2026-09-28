@@ -101,7 +101,7 @@ async def test_background_only_and_real_second_pass():
     
     # Candidate sentences from Chunk 4 that represent general public debate / framing
     # and completely miss the specific environmental impacts question
-    bg_ids = ["c4-s2", "c4-s3", "c4-s4"]
+    bg_ids = ["c4-s2", "c4-s6", "c4-s8"]
     print(f"Identified Background-Only Candidate IDs for Pass 1 injection: {bg_ids}")
     
     initial_state["_test_synthesizer_override"] = {

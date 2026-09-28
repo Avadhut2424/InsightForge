@@ -40,6 +40,11 @@ def is_bad_sentence(s: str) -> bool:
         return True
     if re.search(r'\bAbstract\b', s) and (any(kw in s for kw in ["Institute", "University", "Email", "Author", "Transformation", "@"]) or len(s) < 120):
         return True
+        
+    # 5. Drop candidate sentences that do not end in terminal punctuation (. ! ? or closing quote/paren)
+    s_stripped = s.strip()
+    if not re.search(r'[.!?][\'"”’\)\]]?$', s_stripped):
+        return True
     
     return False
 

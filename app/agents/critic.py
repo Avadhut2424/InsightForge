@@ -16,7 +16,7 @@ class CriticAgent(Agent):
             
         draft_input = data.get("draft")
         evidence_chunks = data.get("evidence", [])
-        topic = data.get("topic", "the sub-question")
+        sub_question = data.get("sub_question", "the sub-question")
         
         # Priority 1: Direct 'sentences' list in data or inside draft dict/list
         sentence_items = []
@@ -74,10 +74,34 @@ class CriticAgent(Agent):
                 "reason": "The following claims are unsupported by the evidence: " + " | ".join(unsupported_sentences)
             }
             
-        # b) Completeness check via LLM
+        # b) Relevance floor check (at least 2 sentences >= 0.50 floor)
+        if "The provided evidence does not contain enough information" not in draft_text:
+            try:
+                from app.mcp_servers.db_lookup import get_embedding_model
+                import numpy as np
+                model = get_embedding_model()
+                q_emb = model.encode(sub_question, normalize_embeddings=True)
+                floor_passing = []
+                for s_clean in sentences_to_check:
+                    if not s_clean or len(s_clean) < 15:
+                        continue
+                    s_emb = model.encode(s_clean, normalize_embeddings=True)
+                    sim = float(np.dot(q_emb, s_emb))
+                    if sim >= 0.50:
+                        floor_passing.append((s_clean, sim))
+                        
+                if len(floor_passing) < 2:
+                    return {
+                        "verdict": "revise",
+                        "reason": f"Insufficient relevant sentences: only {len(floor_passing)} sentences met relevance floor 0.50 against '{sub_question}'"
+                    }
+            except Exception as e:
+                pass # If model lookup fails in isolated unit tests, fallback to LLM
+            
+        # c) Completeness check via LLM
         prompt = (
             f"Evaluate if the following draft report section is on-topic and addresses the core sub-question.\n\n"
-            f"Sub-question: {topic}\n\n"
+            f"Sub-question: {sub_question}\n\n"
             f"Draft:\n{draft_text}\n\n"
             f"EVALUATION INSTRUCTIONS:\n"
             f"1. Set 'answers' to true if the draft is on-topic and directly covers the main topic asked by the sub-question. A partial answer built from cited evidence is acceptable as long as the core is covered.\n"
