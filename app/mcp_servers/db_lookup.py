@@ -21,20 +21,22 @@ def similarity_search(query: str, top_k: int = 5) -> Dict[str, Any]:
         query_embedding = model.encode(query).tolist()
         
         with SessionLocal() as db:
-            results = db.scalars(
-                select(KBChunk)
-                .order_by(KBChunk.embedding.cosine_distance(query_embedding))
-                .limit(top_k)
-            ).all()
+            distance_expr = KBChunk.embedding.cosine_distance(query_embedding).label("distance")
+            stmt = select(KBChunk, distance_expr).order_by(distance_expr).limit(top_k)
+            results = db.execute(stmt).all()
             
             chunks = []
-            for chunk in results:
+            for row in results:
+                chunk = row[0]
+                dist = float(row[1])
                 chunks.append({
                     "id": chunk.id,
                     "source": chunk.source_name,
                     "title": chunk.document_title,
-                    "snippet": chunk.content[:200]
+                    "snippet": chunk.content[:200],
+                    "distance": dist
                 })
+
                 
             return {"success": True, "data": {"results": chunks}}
     except Exception as e:

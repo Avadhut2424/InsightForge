@@ -56,15 +56,16 @@ class CriticAgent(Agent):
             
         # b) Completeness check via LLM
         prompt = (
-            f"Review the following draft report section and determine if it fully answers the sub-question.\n\n"
+            f"Review the following draft report section and determine if it is on-topic and covers the main point of the sub-question.\n\n"
             f"Sub-question: {topic}\n\n"
             f"Draft:\n{draft}\n\n"
             f"CRITICAL RULES:\n"
-            f"1. You MUST output your response ONLY as a JSON object.\n"
-            f"2. The JSON object must have exactly two keys:\n"
-            f"   - 'answers': true or false (boolean) depending on whether the draft answers the sub-question.\n"
-            f"   - 'missing': A short string phrase explaining what important aspect is missing, or null if nothing is missing.\n"
-            f"3. Do not wrap it in markdown block quotes. Output JSON only."
+            f"1. A partial answer built from cited evidence is acceptable as long as the core of the sub-question is addressed. Do not reject a draft just because it lacks exhaustive detail.\n"
+            f"2. You MUST output your response ONLY as a JSON object.\n"
+            f"3. The JSON object must have exactly two keys:\n"
+            f"   - 'answers': true or false (boolean) depending on whether the draft covers the main thing the sub-question asks.\n"
+            f"   - 'missing': A short string phrase explaining what core aspect is missing, or null if nothing is missing.\n"
+            f"4. Do not wrap it in markdown block quotes. Output JSON only."
         )
         
         response = await call_llm(role="critic", prompt=prompt)

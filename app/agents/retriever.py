@@ -39,7 +39,8 @@ class RetrieverAgent(Agent):
                     "title": s.get("title"),
                     # Add full text capped at 1500 chars for agents to use
                     "content": content[:1500],
-                    "snippet": s.get("snippet")
+                    "snippet": s.get("snippet"),
+                    "distance": s.get("distance", 0.0)
                 })
         
         return full_chunks
