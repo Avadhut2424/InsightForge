@@ -15,5 +15,5 @@ ROLE_MODEL_MAP = {
 
 def get_model_for_role(role: str) -> str:
     if settings.llm_provider.lower() == "ollama":
-        return "llama3.1:8b"
+        return settings.ollama_model
     return ROLE_MODEL_MAP.get(role, ROLE_MODEL_MAP["default"])

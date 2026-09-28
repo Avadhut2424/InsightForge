@@ -40,7 +40,8 @@ async def _execute_llm_call_with_retry(
     model: str,
     prompt: str,
     max_tokens: int,
-    timeout: float
+    timeout: float,
+    **kwargs
 ):
     """Inner function to handle retries using tenacity."""
     return await client.chat.completions.create(
@@ -48,7 +49,8 @@ async def _execute_llm_call_with_retry(
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
         timeout=timeout,
-        temperature=0.0
+        temperature=kwargs.get("temperature", 0.0),
+        **{k: v for k, v in kwargs.items() if k != "temperature"}
     )
 
 
@@ -74,7 +76,8 @@ async def call_llm(
             model=model,
             prompt=prompt,
             max_tokens=actual_max_tokens,
-            timeout=actual_timeout
+            timeout=actual_timeout,
+            **kwargs
         )
     except RetryError as e:
         # Tenacity raised a RetryError after exhausting attempts

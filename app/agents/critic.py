@@ -19,44 +19,110 @@ class CriticAgent(Agent):
         evidence_text = ""
         for i, chunk in enumerate(evidence_chunks):
             title = chunk.get("title", "Unknown Source")
-            snippet = chunk.get("snippet", "")
-            evidence_text += f"--- Evidence {i+1} ({title}) ---\n{snippet}\n\n"
+            content = chunk.get("content", chunk.get("snippet", ""))
+            evidence_text += f"--- Evidence {i+1} ({title}) ---\\n{content}\\n\\n"
             
-        prompt = (
-            f"You are a strict research critic. Your job is to verify if the provided draft is "
-            f"FULLY supported by the provided evidence. \n\n"
-            f"Evidence:\n"
-            f"{evidence_text}\n\n"
-            f"Draft:\n"
-            f"{draft}\n\n"
-            f"Task:\n"
-            f"1. Break the draft down sentence by sentence.\n"
-            f"2. Check if EACH sentence introduces ANY claims, facts, or statistics NOT explicitly present in the evidence.\n"
-            f"3. Note: If a sentence explicitly states that there is NOT ENOUGH evidence, or that the evidence DOES NOT provide specific information, this is an accurate statement of omission. Do NOT flag this as an unsupported claim. This is a sign of a well-grounded draft.\n"
-            f"4. If EVEN ONE substantive claim is unsupported or extrapolated from general knowledge, your verdict must be 'revise', and you must provide a specific reason flagging the exact unsupported claim.\n"
-            f"5. If and ONLY if ALL claims are completely and explicitly supported by the evidence (or accurately state an omission), your verdict must be 'approve'.\n\n"
-            f"Return ONLY a valid JSON object with two keys: 'verdict' (must be exactly 'approve' or 'revise') "
-            f"and 'reason' (a string explaining the verdict, focusing on any unsupported claims found). "
-            f"CRITICAL: The 'reason' string must be a single continuous line. Use '\\\\n' (escaped newline) instead of actual line breaks if you must format it. "
-            f"Do not include markdown blocks (like ```json), just the raw JSON object."
-        )
+        import re
+        # Basic sentence splitting (naive, but enough for this check)
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', draft) if s.strip()]
         
-        response = await call_llm(role="critic", prompt=prompt)
-        text = response.text.strip()
+        unsupported_sentences = []
         
-        # Strip markdown formatting
-        if text.startswith("```json"):
-            text = text[7:]
-        elif text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+        for sentence in sentences:
+            prompt = (
+                f"You are a strict research critic. Determine if the following sentence is supported by the evidence.\\n\\n"
+                f"Evidence:\\n{evidence_text}\\n"
+                f"Sentence:\\n{sentence}\\n\\n"
+                f"If the sentence is supported, extract the EXACT substring from the evidence that supports it.\\n"
+                f"Return a JSON object: {{\"supported\": true/false, \"evidence_quote\": \"<exact quote or null>\"}}."
+            )
             
-        try:
-            verdict_data = json.loads(text)
-            if not isinstance(verdict_data, dict) or "verdict" not in verdict_data or "reason" not in verdict_data:
-                raise ValueError("LLM did not return a correct JSON object structure")
-            return verdict_data
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse LLM output as JSON. Output was: {text}") from e
+            response = await call_llm(
+                role="critic", 
+                prompt=prompt,
+                response_format={"type": "json_object"}
+            )
+            
+            try:
+                result = json.loads(response.text.strip())
+                is_supported = result.get("supported", False)
+                quote = result.get("evidence_quote")
+            except Exception:
+                is_supported = False
+                quote = None
+                
+            # If the LLM says supported, verify the quote actually exists in the evidence text (case-insensitive for safety)
+            if is_supported:
+                if not quote:
+                    is_supported = False
+                else:
+                    normalized_quote = re.sub(r'\s+', '', str(quote).lower())
+                    normalized_evidence = re.sub(r'\s+', '', evidence_text.lower())
+                    if normalized_quote not in normalized_evidence:
+                        is_supported = False
+                        
+            import os
+            if is_supported and os.environ.get("STRICT_CRITIC") == "1":
+                # a) Quote length cap
+                if len(str(quote)) > 250:
+                    is_supported = False
+                else:
+                    # b) Strip citations
+                    stripped_quote = re.sub(r'\([^)]*\)', '', str(quote))
+                    
+                    # c/d) Claim-critical token check
+                    def get_critical_tokens(txt: str):
+                        toks = set()
+                        # numbers (strip commas)
+                        clean_txt = txt.replace(",", "")
+                        toks.update(re.findall(r'\b\d+\b', clean_txt))
+                        # acronyms
+                        toks.update(a.lower() for a in re.findall(r'\b[A-Z]{2,}\b', txt))
+                        # capitalized proper nouns
+                        toks.update(p.lower() for p in re.findall(r'\b[A-Z][a-z]+\b', txt))
+                        # negations and hedges
+                        special = {'not', 'no', 'never', 'without', 'cannot', 'may', 'might', 'will', 'expects', 'could'}
+                        for w in re.findall(r'\b\w+\b', txt.lower()):
+                            if w in special:
+                                toks.add(w)
+                        if re.search(r"n't\b", txt.lower()):
+                            toks.add("not")
+                        return toks
+                    
+                    def has_neg(txt: str):
+                        neg_words = {'not', 'no', 'never', 'without', 'cannot'}
+                        if re.search(r"n't\b", txt.lower()):
+                            return True
+                        return any(w in neg_words for w in re.findall(r'\b\w+\b', txt.lower()))
+                        
+                    sent_tokens = get_critical_tokens(sentence)
+                    quote_lower = stripped_quote.lower()
+                    quote_clean = quote_lower.replace(",", "")
+                    
+                    for t in sent_tokens:
+                        # light normalization: just check substring in cleaned quote
+                        if t not in quote_clean and t not in quote_lower:
+                            # try stripping plural 's'
+                            if t.endswith('s') and t[:-1] in quote_lower:
+                                continue
+                            is_supported = False
+                            break
+                    
+                    # Reverse negation check
+                    if is_supported:
+                        if has_neg(sentence) != has_neg(stripped_quote):
+                            is_supported = False
+            
+            if not is_supported:
+                unsupported_sentences.append(sentence)
+                
+        if unsupported_sentences:
+            return {
+                "verdict": "revise",
+                "reason": f"The following claims are unsupported by the evidence: {' | '.join(unsupported_sentences)}"
+            }
+        else:
+            return {
+                "verdict": "approve",
+                "reason": "All claims are supported by the provided evidence."
+            }

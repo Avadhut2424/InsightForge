@@ -11,14 +11,36 @@ class RetrieverAgent(Agent):
         if not isinstance(sub_question, str):
             raise ValueError("RetrieverAgent expects a string sub-question as input")
             
-        # Call the Phase 5 db_lookup tool's similarity_search function directly.
-        # Note: Tool-augmented retrieval (e.g. web_search) is deferred to Phase 7 
-        # as requested, to keep this phase's Retriever knowledge-base-only and its
-        # behavior easy to isolate and verify.
+        from app.db.session import SessionLocal
+        from app.db.models import KBChunk
+        from sqlalchemy import select
+        
         result = similarity_search(query=sub_question, top_k=5)
         
         if not result.get("success"):
             error_detail = result.get("error", {}).get("detail", "Unknown error")
             raise RuntimeError(f"Database lookup failed: {error_detail}")
             
-        return result.get("data", {}).get("results", [])
+        snippets = result.get("data", {}).get("results", [])
+        if not snippets:
+            return []
+            
+        chunk_ids = [s["id"] for s in snippets]
+        full_chunks = []
+        with SessionLocal() as db:
+            db_chunks = db.scalars(select(KBChunk).where(KBChunk.id.in_(chunk_ids))).all()
+            id_to_content = {c.id: c.content for c in db_chunks}
+            
+            for s in snippets:
+                content = id_to_content.get(s["id"], s.get("snippet", ""))
+                full_chunks.append({
+                    "id": s["id"],
+                    "source": s.get("source"),
+                    "title": s.get("title"),
+                    # Add full text capped at 1500 chars for agents to use
+                    "content": content[:1500],
+                    "snippet": s.get("snippet")
+                })
+        
+        return full_chunks
+
