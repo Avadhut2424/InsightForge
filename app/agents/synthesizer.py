@@ -33,6 +33,14 @@ def is_bad_sentence(s: str) -> bool:
     if re.search(r'\(\d{4}[a-z]?\)\.', s) or re.search(r'No\.\s*\d+', s):
         return True
     
+    # 4. Email addresses, author/affiliation lines, and Abstract-prefixed title blocks
+    if re.search(r'[\w\.-]+@[\w\.-]+\.\w+', s):
+        return True
+    if re.search(r'\b(Institute of|University of|Department of|Faculty of|School of|Email:)\b', s, re.IGNORECASE):
+        return True
+    if re.search(r'\bAbstract\b', s) and (any(kw in s for kw in ["Institute", "University", "Email", "Author", "Transformation", "@"]) or len(s) < 120):
+        return True
+    
     return False
 
 def starts_with_dangling_referent(s: str) -> bool:

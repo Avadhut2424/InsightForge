@@ -17,3 +17,5 @@ pgvector==0.2.5
 tenacity==8.3.0
 simpleeval
 tavily-python
+langgraph==1.2.12
+langchain-core==1.6.5

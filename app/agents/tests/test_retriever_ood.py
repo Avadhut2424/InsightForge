@@ -47,5 +47,37 @@ async def test_retriever_ood():
             print(f"Retriever error on sub-question '{sq}': {e}")
             raise e
 
+async def test_graph_retriever_node_no_memorystore():
+    print("=== Testing Graph retriever_node on Out-of-Domain Sub-questions (No MemoryStore) ===")
+    from app.agents.graph.nodes import retriever_node
+    from app.agents.graph.state import ResearchState
+    
+    ood_questions = [
+        "How did the political landscape of Italy influence Renaissance art?",
+        "Who were the primary patrons of the arts during the Italian Renaissance?",
+        "What were the key techniques developed by Italian Renaissance painters?"
+    ]
+    
+    state: ResearchState = {
+        "run_id": "test-ood",
+        "topic": "Renaissance art and patronage",
+        "sub_questions": ood_questions,
+        "evidence": {},
+        "sections": {sq: {"status": "pending"} for sq in ood_questions},
+        "max_revisions": 1,
+        "critique_history": []
+    }
+    
+    diff = await retriever_node(state)
+    sections = diff["sections"]
+    for sq in ood_questions:
+        sec = sections[sq]
+        print(f"Sub-question: {sq}")
+        print(f"Status: {sec['status']}, Reason: {sec.get('reason')}")
+        assert sec["status"] == "insufficient_evidence", f"Expected insufficient_evidence for {sq}, got {sec['status']}"
+    print("Assertion passed: All OOD questions marked insufficient_evidence without MemoryStore.\n")
+
 if __name__ == "__main__":
     asyncio.run(test_retriever_ood())
+    asyncio.run(test_graph_retriever_node_no_memorystore())
+

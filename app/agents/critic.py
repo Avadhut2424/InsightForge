@@ -9,7 +9,7 @@ class CriticAgent(Agent):
     Evaluates whether the drafted report section answers the sub-question,
     and independently verifies that every sentence is a literal substring of the evidence.
     """
-    async def run(self, task: Task, memory: MemoryStore) -> Dict[str, Any]:
+    async def run(self, task: Task, memory: Any = None) -> Dict[str, Any]:
         data = task.input_data
         if not isinstance(data, dict) or ("draft" not in data and "sentences" not in data) or "evidence" not in data:
             raise ValueError("CriticAgent expects input_data to be a dict with 'draft' (or 'sentences') and 'evidence'")
