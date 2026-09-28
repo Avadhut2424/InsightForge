@@ -32,10 +32,12 @@ class CriticAgent(Agent):
             f"Task:\n"
             f"1. Break the draft down sentence by sentence.\n"
             f"2. Check if EACH sentence introduces ANY claims, facts, or statistics NOT explicitly present in the evidence.\n"
-            f"3. If EVEN ONE claim is unsupported or extrapolated from general knowledge, your verdict must be 'revise', and you must provide a specific reason flagging the exact unsupported claim.\n"
-            f"4. If and ONLY if ALL claims are completely and explicitly supported by the evidence, your verdict must be 'approve'.\n\n"
+            f"3. Note: If a sentence explicitly states that there is NOT ENOUGH evidence, or that the evidence DOES NOT provide specific information, this is an accurate statement of omission. Do NOT flag this as an unsupported claim. This is a sign of a well-grounded draft.\n"
+            f"4. If EVEN ONE substantive claim is unsupported or extrapolated from general knowledge, your verdict must be 'revise', and you must provide a specific reason flagging the exact unsupported claim.\n"
+            f"5. If and ONLY if ALL claims are completely and explicitly supported by the evidence (or accurately state an omission), your verdict must be 'approve'.\n\n"
             f"Return ONLY a valid JSON object with two keys: 'verdict' (must be exactly 'approve' or 'revise') "
             f"and 'reason' (a string explaining the verdict, focusing on any unsupported claims found). "
+            f"CRITICAL: The 'reason' string must be a single continuous line. Use '\\\\n' (escaped newline) instead of actual line breaks if you must format it. "
             f"Do not include markdown blocks (like ```json), just the raw JSON object."
         )
         

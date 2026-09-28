@@ -4,7 +4,7 @@ import os
 import sys
 
 # Ensure app is in path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from app.agents.base import Task, MemoryStore
 from app.agents.planner import PlannerAgent
