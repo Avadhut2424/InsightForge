@@ -49,11 +49,11 @@ async def main():
     start_time = time.time()
     try:
         final_state = await graph.ainvoke(initial_state)
-    except Exception as e:
+    except BaseException as e:
         print(f"Error during graph execution: {e}")
         if run_id:
             complete_research_run(run_id, "failed", {"error": str(e)})
-        raise e
+        raise
 
     elapsed = time.time() - start_time
 

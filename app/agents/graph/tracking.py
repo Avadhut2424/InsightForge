@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
+from sqlalchemy import func
 from app.db.session import SessionLocal
 from app.db.models import ResearchRun, AgentStep, ToolCall, Revision
 
@@ -45,25 +46,27 @@ def complete_research_run(run_id: Optional[int], final_status: str, metadata: Op
 def record_agent_step(
     run_id: Optional[int],
     agent_name: str,
-    step_index: int,
-    status: str,
-    started_at: datetime,
-    completed_at: datetime,
+    step_index: Optional[int] = None,
+    status: str = "completed",
+    started_at: Optional[datetime] = None,
+    completed_at: Optional[datetime] = None,
     input_summary: Optional[Dict[str, Any]] = None,
     output_summary: Optional[Dict[str, Any]] = None
 ) -> Optional[int]:
-    """Record an individual agent execution step."""
+    """Record an individual agent execution step with strictly sequential step_index."""
     if not run_id:
         return None
     try:
         with SessionLocal() as db:
+            max_idx = db.query(func.max(AgentStep.step_index)).filter(AgentStep.run_id == run_id).scalar()
+            seq_index = (max_idx or 0) + 1
             step = AgentStep(
                 run_id=run_id,
                 agent_name=agent_name,
-                step_index=step_index,
+                step_index=seq_index,
                 status=status,
-                started_at=started_at,
-                completed_at=completed_at,
+                started_at=started_at or datetime.utcnow(),
+                completed_at=completed_at or datetime.utcnow(),
                 input_summary=input_summary or {},
                 output_summary=output_summary or {}
             )
@@ -75,16 +78,49 @@ def record_agent_step(
         logger.warning(f"Failed to record agent step in DB: {e}")
         return None
 
-def record_revision(run_id: Optional[int], revision_number: int, reason: str) -> Optional[int]:
-    """Record a revision cycle initiated by the Critic."""
+def record_tool_call(
+    run_id: Optional[int],
+    tool_name: str,
+    input_payload: Optional[Dict[str, Any]] = None,
+    output_payload: Optional[Dict[str, Any]] = None,
+    status: str = "completed",
+    duration_ms: Optional[int] = None,
+    step_id: Optional[int] = None
+) -> Optional[int]:
+    """Record a tool execution (e.g. db_lookup.similarity_search) in DB."""
     if not run_id:
         return None
     try:
         with SessionLocal() as db:
+            tc = ToolCall(
+                run_id=run_id,
+                step_id=step_id,
+                tool_name=tool_name,
+                input_payload=input_payload or {},
+                output_payload=output_payload or {},
+                status=status,
+                called_at=datetime.utcnow(),
+                duration_ms=duration_ms
+            )
+            db.add(tc)
+            db.commit()
+            db.refresh(tc)
+            return tc.id
+    except Exception as e:
+        logger.warning(f"Failed to record tool call in DB: {e}")
+        return None
+
+def record_revision(run_id: Optional[int], revision_number: int, reason: str, sub_question: Optional[str] = None) -> Optional[int]:
+    """Record a revision cycle initiated by the Critic with sub-question context."""
+    if not run_id:
+        return None
+    try:
+        with SessionLocal() as db:
+            formatted_reason = f"[{sub_question}] {reason}" if sub_question else reason
             rev = Revision(
                 run_id=run_id,
                 revision_number=revision_number,
-                reason=reason,
+                reason=formatted_reason,
                 created_at=datetime.utcnow()
             )
             db.add(rev)

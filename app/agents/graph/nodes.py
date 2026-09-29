@@ -10,7 +10,7 @@ from app.agents.graph.routing import (
     determine_final_status,
     get_next_sub_question_to_process,
 )
-from app.agents.graph.tracking import record_agent_step, record_revision
+from app.agents.graph.tracking import record_agent_step, record_revision, record_tool_call
 from app.agents.synthesizer import split_sentences, is_bad_sentence, starts_with_dangling_referent
 from app.agents.critic import CriticAgent
 from app.agents.base import Task
@@ -81,7 +81,6 @@ async def planner_node(state: ResearchState) -> Dict[str, Any]:
     record_agent_step(
         run_id=int(run_id) if run_id and str(run_id).isdigit() else None,
         agent_name="planner",
-        step_index=1,
         status="completed",
         started_at=started_at,
         completed_at=completed_at,
@@ -117,6 +116,7 @@ async def retriever_node(state: ResearchState) -> Dict[str, Any]:
     sub_questions = state.get("sub_questions", [])
     evidence = state.get("evidence", {})
     sections = state.get("sections", {})
+    tool_call_records = []
     
     for sq in sub_questions:
         if sq not in sections:
@@ -128,8 +128,23 @@ async def retriever_node(state: ResearchState) -> Dict[str, Any]:
                 "revision_count": 0,
                 "status": "pending"
             }
+        t_start = datetime.utcnow()
         res = similarity_search(query=sq, top_k=5)
+        duration_ms = int((datetime.utcnow() - t_start).total_seconds() * 1000)
         snippets = res.get("data", {}).get("results", []) if res.get("success") else []
+        distances = [float(s.get("distance", 0.0)) for s in snippets]
+        tool_call_records.append({
+            "tool_name": "db_lookup.similarity_search",
+            "input_payload": {"query": sq, "top_k": 5},
+            "output_payload": {
+                "chunk_count": len(snippets),
+                "min_distance": round(min(distances), 4) if distances else None,
+                "max_distance": round(max(distances), 4) if distances else None,
+                "avg_distance": round(sum(distances) / len(distances), 4) if distances else None
+            },
+            "status": "completed" if res.get("success") else "failed",
+            "duration_ms": duration_ms
+        })
         
         if not snippets:
             sections[sq] = {
@@ -205,10 +220,9 @@ async def retriever_node(state: ResearchState) -> Dict[str, Any]:
             sections[sq]["reason"] = None
             
     completed_at = datetime.utcnow()
-    record_agent_step(
+    step_id = record_agent_step(
         run_id=int(run_id) if run_id and str(run_id).isdigit() else None,
         agent_name="retriever",
-        step_index=2,
         status="completed",
         started_at=started_at,
         completed_at=completed_at,
@@ -218,6 +232,17 @@ async def retriever_node(state: ResearchState) -> Dict[str, Any]:
             "statuses": {sq: sec["status"] for sq, sec in sections.items()}
         }
     )
+    if run_id and str(run_id).isdigit():
+        for tc in tool_call_records:
+            record_tool_call(
+                run_id=int(run_id),
+                tool_name=tc["tool_name"],
+                input_payload=tc["input_payload"],
+                output_payload=tc["output_payload"],
+                status=tc["status"],
+                duration_ms=tc["duration_ms"],
+                step_id=step_id
+            )
     
     return {
         "evidence": evidence,
@@ -402,12 +427,16 @@ async def synthesizer_node(state: ResearchState) -> Dict[str, Any]:
     record_agent_step(
         run_id=int(run_id) if run_id and str(run_id).isdigit() else None,
         agent_name="synthesizer",
-        step_index=3,
         status="completed",
         started_at=started_at,
         completed_at=completed_at,
         input_summary={"sub_question": sq, "is_revision": is_revision},
-        output_summary={"selected_ids": valid_selections, "sentence_count": len(surviving_sentences)}
+        output_summary={
+            "selected_ids": valid_selections,
+            "sentence_count": len(surviving_sentences),
+            "draft": sec.get("draft", []),
+            "assembled_text": sec.get("assembled_text", "")
+        }
     )
     
     diff: Dict[str, Any] = {"sections": sections}
@@ -483,7 +512,8 @@ async def critic_node(state: ResearchState) -> Dict[str, Any]:
             record_revision(
                 run_id=int(run_id) if run_id and str(run_id).isdigit() else None,
                 revision_number=sec["revision_count"],
-                reason=reason
+                reason=reason,
+                sub_question=sq_to_eval
             )
             sec["status"] = "needs_revision"
         else:
@@ -496,12 +526,17 @@ async def critic_node(state: ResearchState) -> Dict[str, Any]:
     record_agent_step(
         run_id=int(run_id) if run_id and str(run_id).isdigit() else None,
         agent_name="critic",
-        step_index=4,
         status="completed",
         started_at=started_at,
         completed_at=completed_at,
         input_summary={"evaluated_sub_question": sq_to_eval},
-        output_summary={"verdict": verdict, "status": sec["status"], "revision_count": sec.get("revision_count", 0)}
+        output_summary={
+            "evaluated_sub_question": sq_to_eval,
+            "verdict": verdict,
+            "status": sec["status"],
+            "revision_count": sec.get("revision_count", 0),
+            "reason": reason
+        }
     )
     
     return {

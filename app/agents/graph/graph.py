@@ -20,12 +20,25 @@ from app.agents.graph.routing import (
 from app.agents.graph.tracking import complete_research_run
 
 async def finalize_node(state: ResearchState) -> Dict[str, Any]:
-    """Finalizes research run and records final status."""
+    """Finalizes research run and records final status and report metadata."""
     sections = state.get("sections", {})
     final_status = determine_final_status(sections)
     run_id = state.get("run_id")
     if run_id and str(run_id).isdigit():
-        complete_research_run(int(run_id), final_status)
+        metadata = {
+            "sub_question_count": len(sections),
+            "sections": {
+                sq: {
+                    "status": sec.get("status"),
+                    "verdict": sec.get("verdict"),
+                    "revision_count": sec.get("revision_count", 0),
+                    "assembled_text": sec.get("assembled_text", ""),
+                    "draft": sec.get("draft", [])
+                }
+                for sq, sec in sections.items()
+            }
+        }
+        complete_research_run(int(run_id), final_status, metadata=metadata)
     return {"final_status": final_status}
 
 def build_research_graph():
