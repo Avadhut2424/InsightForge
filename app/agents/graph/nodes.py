@@ -430,21 +430,24 @@ async def critic_node(state: ResearchState) -> Dict[str, Any]:
     max_revisions = state.get("max_revisions", 1)
     critique_history = list(state.get("critique_history", []))
     
-    # Find the section that was just synthesized
+    # Find the section that was just synthesized or marked insufficient
     sq_to_eval = None
     for sq in sub_questions:
-        if sections.get(sq, {}).get("status") == "synthesized":
+        if sections.get(sq, {}).get("status") in ("synthesized", "insufficient_evidence"):
             sq_to_eval = sq
             break
             
     if not sq_to_eval:
-        return {"sections": sections}
+        return {"sections": sections, "critique_history": critique_history}
         
     sec = dict(sections[sq_to_eval])
     chunks = evidence.get(sq_to_eval, [])
     
     # Test injection 2 of 2: forced critic revision
-    if state.get("_test_force_critic_revise"):
+    if sec.get("status") == "insufficient_evidence":
+        verdict = "revise"
+        reason = sec.get("reason", "Insufficient evidence")
+    elif state.get("_test_force_critic_revise"):
         verdict = "revise"
         reason = "Forced revision for revision cap testing"
     else:

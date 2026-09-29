@@ -3,7 +3,7 @@ FROM insightforge-api:latest
 USER root
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir langgraph==1.2.12 langchain-core==1.6.5
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the app source code and alembic files
 COPY app ./app

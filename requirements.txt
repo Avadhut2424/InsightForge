@@ -19,3 +19,5 @@ simpleeval
 tavily-python
 langgraph==1.2.12
 langchain-core==1.6.5
+pytest==8.2.2
+pytest-asyncio==0.23.7

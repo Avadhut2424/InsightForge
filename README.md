@@ -83,6 +83,7 @@ The CriticAgent conducts:
 2. **Critic Scope**: The Critic evaluates topical completeness and verifies literal chunk presence; it does not perform granular sentence-by-sentence relevance scoring or inter-sentence redundancy removal.
 3. **Sentence Candidate Relevance**: After author/affiliation and header filtering, candidate sentences in the corpus measure at **43.3% strictly relevant, 26.7% marginal, and 30.0% irrelevant**. The Synthesizer's sentence ID selection must actively filter out the remaining marginal candidates.
 4. **Embedding Distance Sensitivity**: The distance cutoff ($0.255$) depends on `BAAI/bge-small-en-v1.5` cosine geometry. While it blocks out-of-scope topics with 100% accuracy in our tests, niche in-domain sub-questions can be falsely blocked if phrasing diverges from the chunk vocabulary.
+5. **Relevance Floor vs. Critic Overlap**: The Synthesizer applies a strict 0.50 sentence-level semantic relevance floor against the sub-question. This aggressively filters out overtly off-topic or pure-background sentences before they reach the LLM draft. Consequently, the Critic's "revise" loops are primarily triggered by *incomplete coverage* (e.g. omitting a required aspect of a multi-part question) rather than by entirely irrelevant content.
 
 ## Local LLM Setup (Ollama)
 
