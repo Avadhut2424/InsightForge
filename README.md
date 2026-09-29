@@ -11,6 +11,7 @@ A retrieval-augmented research system with local embeddings, multi-source ingest
 - **Phase 5** — MCP tool servers: ✅ complete
 - **Phase 6** — Build agents individually: ✅ complete (select-and-assemble grounding & verified local LLM evaluation)
 - **Phase 7** — Wire agents into LangGraph: ✅ complete (state machine, sequential routing, run tracking, sufficiency gating)
+- **Phase 8** — Logging to the Database: ✅ complete (full observability with SQL-only reconstruction of runs, tool calls, and revisions)
 
 ## Architecture
 
