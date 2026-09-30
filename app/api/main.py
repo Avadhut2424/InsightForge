@@ -1,12 +1,23 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from app.core.config import settings
 from app.core.llm.client import call_llm
 from app.core.llm.exceptions import LLMError
+from app.api.research import router as research_router
+from app.mcp_servers.run_servers import router as mcp_router
 
 app = FastAPI(title="InsightForge AI API")
 
-from app.mcp_servers.run_servers import router as mcp_router
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "Invalid request payload. Must provide a valid JSON object with 'topic'."}
+    )
+
+app.include_router(research_router)
 app.include_router(mcp_router)
 
 @app.get("/health", summary="Health Check")
