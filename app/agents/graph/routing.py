@@ -48,7 +48,8 @@ def get_next_sub_question_to_process(sub_questions: List[str], sections: Dict[st
     """
     Returns the next sub-question that needs processing:
     First priority: a section that needs revision ('needs_revision').
-    Second priority: a pending sub-question ('pending').
+    Second priority: a section that was drafted and needs critique ('synthesized').
+    Third priority: a pending sub-question ('pending').
     Returns None if all sub-questions are in a terminal section state
     ('approved', 'unverified', or 'insufficient_evidence').
     """
@@ -57,8 +58,14 @@ def get_next_sub_question_to_process(sub_questions: List[str], sections: Dict[st
         sec = sections.get(sq, {})
         if sec.get("status") == "needs_revision":
             return sq
+
+    # 2. Any section drafted and waiting for critique pass
+    for sq in sub_questions:
+        sec = sections.get(sq, {})
+        if sec.get("status") == "synthesized":
+            return sq
             
-    # 2. Any section waiting for initial pass
+    # 3. Any section waiting for initial pass
     for sq in sub_questions:
         sec = sections.get(sq, {})
         if sec.get("status") == "pending":

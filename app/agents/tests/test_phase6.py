@@ -41,27 +41,29 @@ async def main():
     print("=== Testing Critic Agent ===")
     
     print("Testing Case (a) Grounded draft...")
-    res_a = await critic.run(Task(input_data={"topic": topic, "draft": draft_a, "evidence": evidence}), memory)
+    res_a = await critic.run(Task(input_data={"sub_question": topic, "topic": topic, "draft": draft_a, "evidence": evidence}), memory)
     print(f"Verdict: {res_a}")
     if res_a["verdict"] != "approve":
         print("ERROR: Expected approve for Case A")
         sys.exit(1)
         
     print("Testing Case (b) Ungrounded draft...")
-    res_b = await critic.run(Task(input_data={"topic": topic, "draft": draft_b, "evidence": evidence}), memory)
+    res_b = await critic.run(Task(input_data={"sub_question": topic, "topic": topic, "draft": draft_b, "evidence": evidence}), memory)
     print(f"Verdict: {res_b}")
     if res_b["verdict"] != "revise":
         print("ERROR: Expected revise for Case B")
         sys.exit(1)
 
     print("Testing Case (c) Fabricated draft...")
-    res_c = await critic.run(Task(input_data={"topic": topic, "draft": draft_c, "evidence": evidence}), memory)
+    res_c = await critic.run(Task(input_data={"sub_question": topic, "topic": topic, "draft": draft_c, "evidence": evidence}), memory)
     print(f"Verdict: {res_c}")
     if res_c["verdict"] != "revise":
         print("ERROR: Expected revise for Case C")
         sys.exit(1)
         
-    print("All tests passed successfully!")
+async def test_phase6_critic_grounding():
+    await main()
 
 if __name__ == "__main__":
     asyncio.run(main())
+

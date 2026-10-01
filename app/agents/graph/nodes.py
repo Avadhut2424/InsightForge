@@ -265,6 +265,11 @@ async def synthesizer_node(state: ResearchState) -> Dict[str, Any]:
         return {"sections": sections}
         
     sec = dict(sections.get(sq, {}))
+    # If the section was already synthesized and is queued for critic evaluation,
+    # pass directly to critic_node without re-synthesizing
+    if sec.get("status") == "synthesized":
+        return {"sections": sections}
+        
     chunks = evidence.get(sq, [])
     is_revision = sec.get("status") == "needs_revision"
     revision_reason = sec.get("reason") if is_revision else None
@@ -461,10 +466,18 @@ async def critic_node(state: ResearchState) -> Dict[str, Any]:
     
     # Find the section that was just synthesized or marked insufficient
     sq_to_eval = None
+    # 1. First priority: any section that was synthesized and awaits critique
     for sq in sub_questions:
-        if sections.get(sq, {}).get("status") in ("synthesized", "insufficient_evidence"):
+        if sections.get(sq, {}).get("status") == "synthesized":
             sq_to_eval = sq
             break
+            
+    # 2. Second priority: any section marked insufficient_evidence
+    if not sq_to_eval:
+        for sq in sub_questions:
+            if sections.get(sq, {}).get("status") == "insufficient_evidence":
+                sq_to_eval = sq
+                break
             
     if not sq_to_eval:
         return {"sections": sections, "critique_history": critique_history}

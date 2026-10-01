@@ -91,7 +91,15 @@ def test_get_next_sub_question_to_process():
     }
     assert get_next_sub_question_to_process(sub_questions, sections) == "sq3"
     
-    # Priority 2: first pending
+    # Priority 2: synthesized sections awaiting critique
+    sections_synth = {
+        "sq1": {"status": "approved"},
+        "sq2": {"status": "synthesized"},
+        "sq3": {"status": "pending"}
+    }
+    assert get_next_sub_question_to_process(sub_questions, sections_synth) == "sq2"
+    
+    # Priority 3: first pending
     sections2 = {
         "sq1": {"status": "approved"},
         "sq2": {"status": "pending"},

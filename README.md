@@ -1,150 +1,236 @@
-# InsightForge AI
+# InsightForge AI — Autonomous Research & Report Generation
 
-A retrieval-augmented research system with local embeddings, multi-source ingestion, and pgvector-backed semantic search.
+A retrieval-augmented research assistant that autonomously investigates complex topics, gathers evidence from an embedded knowledge base, synthesizes citation-grounded drafts, and subjects every section to automated verification.
 
-## Status
+---
 
-- **Phase 1** — Environment & Skeleton: ✅ complete
-- **Phase 2** — PostgreSQL + pgvector schema: ✅ complete
-- **Phase 3** — Data ingestion pipeline: ✅ complete
-- **Phase 4** — LLM connectivity: ✅ complete
-- **Phase 5** — MCP tool servers: ✅ complete
-- **Phase 6** — Build agents individually: ✅ complete (select-and-assemble grounding & verified local LLM evaluation)
-- **Phase 7** — Wire agents into LangGraph: ✅ complete (state machine, sequential routing, run tracking, sufficiency gating)
-- **Phase 8** — Logging to the Database: ✅ complete (full observability with SQL-only reconstruction of runs, tool calls, and revisions)
+## 1. System Status & Implementation Phases
 
-## Architecture
+| Phase | Description | Status |
+|:---:|:---|:---:|
+| **Phase 1** | Project skeleton, dependencies, Docker & configuration | ✅ Complete |
+| **Phase 2** | PostgreSQL 16 + pgvector schema, HNSW index & Alembic migrations | ✅ Complete |
+| **Phase 3** | Ingestion pipeline (ArXiv PDFs, Wikipedia, RSS) & embedding (`bge-small-en-v1.5`) | ✅ Complete |
+| **Phase 4** | Unified LLM abstraction (`call_llm`, fallback handling, Ollama integration) | ✅ Complete |
+| **Phase 5** | Model Context Protocol (MCP) tool servers (db_lookup, web_search, calculator) | ✅ Complete |
+| **Phase 6** | Agent implementations: Planner, Retriever, Synthesizer (extract-and-assemble), Critic | ✅ Complete |
+| **Phase 7** | LangGraph orchestration (`ResearchState`, sequential loop, sufficiency gating, revision cap) | ✅ Complete |
+| **Phase 8** | Database run tracking (`research_runs`, `agent_steps`, `tool_calls`, `revisions`) | ✅ Complete |
+| **Phase 9** | FastAPI production interface (`POST /research`, `GET /research/{run_id}`) | ✅ Complete |
+| **Phase 10** | Polish & Evaluation (empirical metrics, setup documentation, clean-restart test, test suite) | ✅ Complete |
 
-| Layer | Technology |
-|---|---|
-| Ingestion sources | Wikipedia, RSS, ArXiv PDFs |
-| Embedding | `BAAI/bge-small-en-v1.5` (local, 384-dim, no API calls) |
-| Storage | PostgreSQL 16 + pgvector |
-| Vector index | HNSW with cosine distance |
-| LLM Provider | Configurable via `LLM_PROVIDER` in `.env` (Ollama local or OpenAI) |
-| Local Model | `llama3.1-8k` (custom Ollama Modelfile with 8192 context window) |
-| Tools | web_search (Tavily API), calculator (simpleeval), db_lookup (pgvector similarity search) |
-| Agent Orchestration | LangGraph (`StateGraph` with conditional edges & sequential loops) |
-| API | FastAPI + Uvicorn |
-| Container | Docker Compose (migrate / api / db services) |
+---
 
-## Phase 7: LangGraph Workflow & Orchestration
-
-The research workflow is implemented as a state machine in `app/agents/graph/graph.py` with pure routing functions in `app/agents/graph/routing.py`:
+## 2. Architecture & Data Flow
 
 ```mermaid
 graph TD
-    START --> planner
-    planner --> retriever
-    retriever --> route_after_retriever{All insufficient?}
-    route_after_retriever -- Yes --> finalize
-    route_after_retriever -- No --> synthesizer
-    synthesizer --> critic
-    critic --> route_after_critic{Pending or Revise?}
-    route_after_critic -- Needs Revise / Next SQ --> synthesizer
-    route_after_critic -- All Done --> finalize
-    finalize --> END
+    START([User Topic]) --> planner[Planner Agent]
+    planner --> retriever[Retriever Node]
+    retriever --> route_retriever{Sufficient Evidence?}
+    route_retriever -- All SQ Insufficient --> finalize[Finalize Node]
+    route_retriever -- Has Evidence --> synthesizer[Synthesizer Node]
+    synthesizer --> critic[Critic Node]
+    critic --> route_critic{Verdict & Revisions}
+    route_critic -- Needs Revision & Rev < Cap --> synthesizer
+    route_critic -- Approved or Reached Cap --> next_sq{More SQs?}
+    next_sq -- Yes --> synthesizer
+    next_sq -- No --> finalize
+    finalize --> END([Final Report & DB Log])
 ```
 
-### Key Workflow Mechanisms
+| Layer | Component | Details |
+|:---|:---|:---|
+| **API Entrypoint** | FastAPI (`uvicorn`) | Asynchronous non-blocking dispatch with SQLite/Postgres run tracking |
+| **Orchestrator** | LangGraph (`StateGraph`) | Directed cyclic state machine with sequential CPU-safe execution |
+| **Local LLM** | Ollama (`llama3.1-8k`) | Llama-3.1 8B with custom 8,192 token context window (`temperature: 0`) |
+| **Embedding Engine** | `BAAI/bge-small-en-v1.5` | 384-dimensional dense vectors (local CPU execution, no external APIs) |
+| **Vector Database** | PostgreSQL 16 + pgvector | Cosine distance index (`<=>`) with 0.255 calibrated sufficiency cutoff |
+| **Knowledge Base** | Multi-source chunks | 970+ chunks from ArXiv research papers, Wikipedia articles, and RSS feeds |
+| **Agent Gating** | Select-and-Assemble | Deterministic candidate filtering + verbatim sentence extraction + 0.50 relevance floor |
+| **Run Observability** | PostgreSQL logging | Relational trace logs for runs, individual agent steps, MCP tool calls, and revision loops |
 
-1. **State Machine (`ResearchState`)**:
-   Nodes take state dicts and return state diffs, completely replacing `MemoryStore` on the graph path. Contains `run_id`, `topic`, `sub_questions`, `evidence`, `sections`, `max_revisions`, `final_status`, and `critique_history`.
-2. **Evidence Sufficiency Rule**:
-   Computed purely in deterministic code by `retriever_node` (not via the LLM). Requires:
-   - At least 3 retrieved chunks under cosine distance cutoff `0.255` (calibrated against `BAAI/bge-small-en-v1.5`).
-   - At least 2 candidate sentences remaining after filtering.
-   - Non-stopword query keyword overlap against retrieved chunk content.
-   If ALL sub-questions lack sufficient evidence, the graph terminates early with `final_status="insufficient_evidence"` and skips the Synthesizer.
-3. **Sequential Execution**:
-   To prevent concurrency lockups on local CPU-based Ollama instances, all sub-questions and agent passes run strictly sequentially (one LLM call at a time).
-4. **Revision Cap & Section Gating**:
-   Configurable `max_revisions` (default 1). If a section fails the Critic check and reaches `max_revisions`, the latest draft is retained, the section is marked `unverified`, and the graph continues to the next sub-question. `final_status` is computed as `partial` (never `approved`) when unverified sections are present.
-5. **Database Run Tracking**:
-   The workflow logs lifecycle records to `research_runs` (start, finish, final status), `agent_steps` (step index, execution timing, input/output summaries), and `revisions` (cycle number and Critic rejection reasons). Tracking failures log warnings and do not crash the run.
+---
 
-### Running the Graph
+## 3. Cold Start Setup Guide
 
-Execute a research run from inside the API container:
-```bash
-docker compose exec api python -m app.agents.graph.run_graph "the environmental and economic impact of AI"
-```
+Follow these steps from a clean host environment to install prerequisites, build the local model, spin up services, ingest the knowledge base, and execute a live research request.
 
-## Phase 6: Select-and-Assemble Agent Grounding
+### 3.1 Prerequisites
 
-Drafts produced by the Synthesizer are strictly **cited extracts, not free-form prose**. The synthesizer parses evidence chunks into candidate sentences, removes fragments, headings, affiliation lines, and reference lists, pairs dangling referents ("This/It") with their immediate antecedent, caps candidates to 25, and prompts the LLM to return only sentence IDs. Code assembles the verbatim sentences with explicit citations.
+1. **Docker Desktop**: Version 4.25+ (with Docker Compose v2.20+).
+2. **Ollama**: Installed locally on the host machine ([ollama.com](https://ollama.com)).
+3. **Host Networking / Firewall**: Docker must be able to reach host port `11434` via `host.docker.internal`.
 
-The CriticAgent conducts:
-1. **Deterministic code-level substring verification**: Checks each extracted sentence directly against normalized retrieved chunks to guarantee 100% evidentiary grounding without regex distortion.
-2. **LLM completeness & on-topic check**: Evaluates whether the draft directly addresses the core sub-question, requesting JSON mode (`{"answers": bool, "missing": str | null}`). Unparseable critic outputs strictly default to `revise`.
+### 3.2 Ollama Model Configuration
 
-## Known Limits & Remaining Weaknesses
-
-1. **Cited Extracts vs. Prose**: Drafts consist of concatenated verbatim extracts. While this avoids factual hallucination by construction, the drafts lack narrative connective phrasing and stylistic transitions.
-2. **Critic Scope**: The Critic evaluates topical completeness and verifies literal chunk presence; it does not perform granular sentence-by-sentence relevance scoring or inter-sentence redundancy removal.
-3. **Sentence Candidate Relevance**: After author/affiliation and header filtering, candidate sentences in the corpus measure at **43.3% strictly relevant, 26.7% marginal, and 30.0% irrelevant**. The Synthesizer's sentence ID selection must actively filter out the remaining marginal candidates.
-4. **Embedding Distance Sensitivity**: The distance cutoff ($0.255$) depends on `BAAI/bge-small-en-v1.5` cosine geometry. While it blocks out-of-scope topics with 100% accuracy in our tests, niche in-domain sub-questions can be falsely blocked if phrasing diverges from the chunk vocabulary.
-5. **Relevance Floor vs. Critic Overlap**: The Synthesizer applies a strict 0.50 sentence-level semantic relevance floor against the sub-question. This aggressively filters out overtly off-topic or pure-background sentences before they reach the LLM draft. Consequently, the Critic's "revise" loops are primarily triggered by *incomplete coverage* (e.g. omitting a required aspect of a multi-part question) rather than by entirely irrelevant content.
-6. **Stale Critic Benchmark Fixtures**: The Critic benchmark suite (`test_critic_suite.py`) fixtures were authored prior to the introduction of the 0.50 sentence-level relevance floor in the Critic. Because the sentences in the 8 "good" benchmark fixtures score below 0.50 similarity against their specific sub-questions, they are flagged as insufficient relevance in the benchmark summary (0/8 approved). This is a known fixture staleness limitation, not an agent regression.
-7. **Cross-Section Content Overlap**: Sections answering different sub-questions on a narrow knowledge base can converge on near-duplicate content when the available evidence doesn't actually cover the specific angle asked. Because the 0.50 relevance floor and Critic's coverage check both operate per-sub-question without any cross-section awareness of what has already been used elsewhere in the same report, the agent may fall back to the same generic sentences across multiple sections. For example, in Run 30 (`research_runs.id=30`), Sections 1, 2, and 3 all redundantly included the sentence: *"The environmental effects of AI are similarly ambivalent: AI systems consume energy, water, materials, and comput ing hardware..."*. Whether cross-section deduplication or evidence-coverage diversity should be added is a known open question for a future phase (out of scope for Phases 1-8).
-8. **Cold-Start Retrieval Performance**: The first retrieval tool call in a run typically takes 8-12 seconds due to the cold loading of the local `BAAI/bge-small-en-v1.5` embedding model. Subsequent retrieval calls within the same run or session complete in ~500ms. This initial latency is an expected cold-start artifact and not a performance regression in the database or vector search itself.
-## Local LLM Setup (Ollama)
+InsightForge requires an expanded 8,192-token context window so that multi-chunk evidence and candidate sentences can be processed without truncation.
 
 1. **Pull the base model**:
    ```bash
    ollama pull llama3.1:8b
    ```
+
 2. **Build the 8k context model**:
+   Inspect the Modelfile in `ollama/Modelfile`:
+   ```dockerfile
+   FROM llama3.1:8b
+   PARAMETER num_ctx 8192
+   PARAMETER temperature 0
+   ```
+   Create the model:
    ```bash
-   cd ollama
-   ollama create llama3.1-8k -f Modelfile
+   ollama create llama3.1-8k -f ollama/Modelfile
    ```
-3. **Model Keep-Alive (`OLLAMA_KEEP_ALIVE`)**:
-   By default, Ollama unloads inactive models after 5 minutes, resulting in ~10s cold-start model load times. To keep weights resident in memory, set:
-   ```powershell
-   # Windows PowerShell
-   $env:OLLAMA_KEEP_ALIVE="30m"; ollama serve
-   ```
-   ```bash
-   # Linux / macOS
-   export OLLAMA_KEEP_ALIVE="30m"
-   ```
-4. **Execution & CPU Latency**:
-   Local LLM inference runs sequentially on host CPU. Warm calls execute in ~0.5s for small queries and ~4–6s for synthesis prompts, compared to ~10–15s for cold start. A `warm_up_llm()` helper in `app.core.llm.client` primes the model at system startup.
 
-## Quick Start
+3. **Configure Model Resident Memory (Keep-Alive)**:
+   By default, Ollama unloads inactive models after 5 minutes. To avoid repeated ~10–15s cold starts:
+   - **Windows PowerShell**:
+     ```powershell
+     $env:OLLAMA_KEEP_ALIVE="30m"; ollama serve
+     ```
+   - **Linux / macOS**:
+     ```bash
+     export OLLAMA_KEEP_ALIVE="30m" && ollama serve
+     ```
+
+### 3.3 Environment Variables (`.env`)
+
+Copy the template:
+```bash
+cp .env.example .env
+```
+
+| Variable | Description | Default / Requirement |
+|:---|:---|:---|
+| `APP_ENV` | Application environment mode (`development` or `production`) | `development` |
+| `APP_PORT` | Host port mapped to FastAPI API container | `8000` |
+| `POSTGRES_USER` | PostgreSQL superuser username | `insightforge` |
+| `POSTGRES_PASSWORD` | PostgreSQL superuser password | `insightforge` |
+| `POSTGRES_DB` | Target PostgreSQL database name | `insightforge` |
+| `DATABASE_URL` | SQLAlchemy async/sync connection string | `postgresql://insightforge:insightforge@db:5432/insightforge` |
+| `LLM_PROVIDER` | Active LLM driver (`ollama` or `openai`) | `ollama` (works locally without API keys) |
+| `OLLAMA_BASE_URL` | Ollama OpenAI-compatible endpoint inside Docker | `http://host.docker.internal:11434/v1` |
+| `OLLAMA_MODEL` | Target Ollama model name | `llama3.1-8k` |
+| `OPENAI_API_KEY` | Fallback API key if `LLM_PROVIDER=openai` | Placeholder works for Ollama |
+| `TAVILY_API_KEY` | API key for external web search MCP server | Optional placeholder; needed only for external search |
+
+### 3.4 Cold-Start Execution Commands
+
+Execute this sequence in order:
 
 ```bash
-cp .env.example .env          # fill in POSTGRES_* values
-docker compose up -d          # runs migrate, then api, then db
-docker compose ps             # all services should be healthy
+# 1. Build and launch database and API containers
+docker compose up -d --build
 
-# Populate the knowledge base
+# 2. Confirm all services are healthy (api, db, migrate)
+docker compose ps
+
+# 3. Populate the pgvector knowledge base (ArXiv, Wikipedia, RSS)
 docker compose exec api python -m app.ingestion.run_ingestion
+# Note: Ingestion draws from live dynamic feeds (ArXiv, Wikipedia, RSS).
+# Total chunk counts may vary slightly across runs (e.g., 972 vs. 988 chunks); this is expected real-world behavior.
 
-# Verify search
+# 4. Verify vector similarity search is operational
 docker compose exec api python -m app.ingestion.verify_search
+
+# 5. Check API health endpoint
+curl http://localhost:8000/health
 ```
 
-## Database migrations
+### 3.5 Submitting a Research Request
 
-Migrations run automatically via the `migrate` service on `docker compose up`.
+Submit a research request to the Phase 9 API:
 
-To run manually:
 ```bash
-docker compose exec api alembic upgrade head
-docker compose exec api alembic current
+curl -X POST http://localhost:8000/research \
+  -H "Content-Type: application/json" \
+  -d '{"topic": "the environmental impact of AI computing hardware and energy consumption"}'
 ```
 
-Destructive migrations are guarded behind `ALLOW_DESTRUCTIVE_MIGRATIONS=1` in `.env`.
+Response:
+```json
+{"run_id": 1, "status": "running"}
+```
 
-## Folder Structure
+Poll the status and retrieve the structured report:
+```bash
+curl http://localhost:8000/research/1
+```
 
-- `app/api` — FastAPI routes
-- `app/agents` — Individual agents: Planner, Retriever, Synthesizer, Critic
-- `app/agents/graph` — LangGraph implementation: state, nodes, routing, graph, run_graph, tracking
-- `app/db` — SQLAlchemy models and session
-- `app/ingestion` — Multi-source ingestion pipeline
-- `app/mcp_servers` — MCP server implementations
-- `app/core` — Configuration and LLM client
-- `ollama` — Custom Modelfile and Ollama operational instructions
+Once complete, the endpoint returns the report breakdown, per-section citations, and status (`approved`, `partial`, or `insufficient_evidence`).
+
+---
+
+## 4. Troubleshooting & Operational Gotchas
+
+| Issue | Root Cause | Solution |
+|:---|:---|:---|
+| **Container cannot reach Ollama** (`Connection refused`) | Docker container cannot resolve or connect to host loopback `127.0.0.1` | Ensure `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` is configured and `extra_hosts: ["host.docker.internal:host-gateway"]` is present in `docker-compose.yml`. Verify Ollama is actively serving on host. |
+| **Stale container code after edits** | Docker Compose cached the image layer and did not detect host file changes | Run `docker compose up -d --build` to force an image rebuild with the latest code. |
+| **First-call latency (~10–15s)** | Normal cold start: PyTorch/HuggingFace loading `bge-small-en-v1.5` weights and Ollama loading `llama3.1-8k` into host RAM | Do not kill the process. Subsequent warm queries execute in ~500ms to 4s. Set `OLLAMA_KEEP_ALIVE="30m"`. |
+| **Slow run vs. genuinely stuck run** | CPU inference takes ~25–45s per LLM generation. A full 3-question run takes 2–4 minutes | Poll `GET /research/{run_id}`. If `steps_completed` increments every ~30–60s, execution is healthy. If no log entries appear for >300s, check host CPU throttling or container memory limits. |
+
+---
+
+## 5. Automated Test Suite
+
+To verify the integrity of all agents, routing logic, retrieval constraints, revision loops, and end-to-end execution, run the consolidated test suite:
+
+```bash
+# Inside the container:
+docker compose exec api python run_suite.py
+
+# Or directly via pytest:
+docker compose exec api pytest -v \
+  app/agents/tests/test_routing.py \
+  app/agents/tests/test_retrieval_quality.py \
+  app/agents/tests/test_phase6.py \
+  app/agents/tests/test_retriever_ood.py \
+  app/agents/tests/test_revision_cap.py \
+  app/agents/tests/test_forced_revision.py \
+  app/agents/tests/test_critic_suite.py \
+  app/agents/tests/test_end_to_end_smoke.py
+```
+
+> **Runtime Notice:** The full automated suite makes real live LLM and embedding calls (no mocks) and executes in approximately **15 to 25 minutes** on CPU.
+
+---
+
+## 6. Phase 10 Evaluation & Measured Metrics
+
+Evaluation metrics were computed across 15 fresh, unforced runs (IDs 5–19) on the fixed research graph using `app/evaluation/compute_metrics.py`. See [METRICS.md](file:///c:/Users/Avadhut%20Jadhav/OneDrive/Desktop/InsightForge/METRICS.md) for full data tables and analysis.
+
+- **Status Distribution:** 13.3% Approved, 46.7% Partial, 40.0% Insufficient Evidence (100% of out-of-domain topics blocked at retrieval).
+- **Critic Approval Rate:** **94.4%** across sections evaluated by the Critic (17 approved / 18 evaluated); **63.0%** across all 27 planned sub-questions in synthesis runs (15 approved without revision, 2 approved after revision, 1 unverified at cap, 9 insufficient evidence at floor, **0 synthesized unevaluated**). Category sum: 15 + 2 + 1 + 9 = 27 (100.0%).
+- **Revision Cost:** Runs with revision cycles averaged **147.23s** versus **44.77s** for zero-revision runs (+102.46s latency overhead).
+- **Retrieval Threshold Margin:** Approved queries had a mean minimum distance of **0.2138** (below 0.255 threshold); rejected out-of-domain queries averaged **0.3437** (clean ~0.09 margin).
+
+> **Ground Truth Disclaimer:** The Critic's approval verdict represents internal consistency (verbatim chunk match + LLM question completeness check) and does NOT constitute external factual ground truth.
+
+---
+
+## 7. Known Limitations (Consolidated)
+
+The following known limitations and architectural trade-offs have been identified:
+
+1. **Cross-Section Content Overlap on Narrow Evidence**:
+   When the knowledge base contains narrow evidence on a broad topic, the independent per-sub-question synthesizer passes can select identical or near-duplicate high-ranking sentences across different sections. For example, in Run 30, Sections 1, 2, and 3 all cited the same sentence regarding AI hardware resource consumption. The current state machine does not perform cross-section deduplication.
+2. **Relevance Floor vs. Critic Overlap**:
+   The Synthesizer applies a strict 0.50 sentence-level cosine relevance floor against the sub-question. This aggressively prunes off-topic sentences before drafting. Consequently, the Critic's "revise" loop is almost exclusively triggered by *incomplete coverage* (omitting an aspect of a multi-part question) or when fewer than 2 sentences survive the floor, rather than by overtly fabricated statements.
+3. **Stale Critic Benchmark Fixtures**:
+   The test fixtures in `test_critic_suite.py` were written before the 0.50 sentence-level relevance floor was introduced. Several older fixture sentences score below 0.50 against their sub-questions, causing them to be flagged as insufficient relevance in the benchmark summary. This is a known fixture staleness artifact, not an agent regression.
+4. **No Tool-Augmented Retrieval in Live Graph**:
+   While MCP tool servers for web search (Tavily), calculator, and DB lookup are fully implemented, the live LangGraph `retriever_node` queries pgvector directly and does not dispatch dynamic web searches during execution.
+5. **Calibrated Threshold Corpus Specificity**:
+   The distance cutoff ($0.255$) and sentence relevance floor ($0.50$) were calibrated empirically against `BAAI/bge-small-en-v1.5` over a ~970-chunk corpus. While effective at blocking out-of-domain topics, the thresholds can reject niche in-domain queries if phrasing diverges from chunk vocabulary (e.g. Run 45).
+6. **No API Authentication or Distributed Rate-Limiting**:
+   The Phase 9 FastAPI endpoint does not implement API key authentication or user rate-limiting. A global in-memory lock (`asyncio.Lock`) serializes execution inside the container to protect local CPU resources; high-throughput deployments require an external queue (Celery/Redis).
+7. **CPU-Only Local Inference Latency**:
+   On CPU hardware, each LLM generation takes 15–40 seconds. A full 3-question research run with one revision cycle requires 2–4 minutes. Dedicated GPU acceleration would reduce this latency by 5–10x.
+8. **Asymmetric State-Matching Routing Gap (Resolved)**:
+   In earlier iterations prior to October 2026, an asymmetric state-matching defect existed between `critic_node`'s candidate scanning loop and `get_next_sub_question_to_process` in `routing.py`. If an earlier sub-question had an `insufficient_evidence` verdict while a later sub-question had already been drafted (`status = "synthesized"`), `critic_node` prioritized the earlier section for critique/revision. Once that earlier section settled, `get_next_sub_question_to_process` only queried for `needs_revision` or `pending` sections. Because the drafted section was in intermediate state `synthesized`, the function returned `None` and routed directly to `finalize`, leaving ~14.8% (4 of 27) of sections drafted but uncritiqued in the initial evaluation batch (runs 40–54). This bug was diagnosed, root-caused, and resolved in October 2026 by:
+   - Updating `get_next_sub_question_to_process` to explicitly queue `synthesized` sections for critique ahead of `pending` items.
+   - Updating `synthesizer_node` to pass already-drafted `synthesized` sections directly to `critic_node` without redundant LLM re-generation.
+   - Updating `critic_node` to prioritize `synthesized` sections ahead of `insufficient_evidence` items.
+

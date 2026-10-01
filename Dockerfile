@@ -10,6 +10,8 @@ COPY app ./app
 COPY alembic.ini .
 COPY alembic ./alembic
 COPY pytest.ini .
+COPY run_suite.py .
+COPY Makefile .
 
 # Change ownership
 RUN chown -R appuser:appuser /app
