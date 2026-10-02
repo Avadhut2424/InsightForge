@@ -9,3 +9,18 @@ env/
 .idea/
 
 kb_chunks_pre_hnsw.dump
+
+# Root-level scratch and debug scripts (preserves app/ and test subdirectories)
+/scratch_*.py
+/get_*.py
+/find_*.py
+/test_*.py
+/calibrate_*.py
+/submit_*.py
+/run_evaluation_batch.py
+/scratch/
+
+# Data dumps and temporary evaluation artifacts
+*.sql
+*.dump
+eval_runs_output.json

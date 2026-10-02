@@ -208,6 +208,8 @@ Evaluation metrics were computed across 15 fresh, unforced runs (IDs 5–19) on 
 
 > **Ground Truth Disclaimer:** The Critic's approval verdict represents internal consistency (verbatim chunk match + LLM question completeness check) and does NOT constitute external factual ground truth.
 
+> **Evaluation Data Reproduction:** Historical evaluation run data can be re-generated at any time by re-running the 15-topic batch described in this section against the live system (`python -m app.evaluation.compute_metrics --run-ids <ids>`), rather than relying on a committed data snapshot or database dump.
+
 ---
 
 ## 7. Known Limitations (Consolidated)
