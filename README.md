@@ -18,6 +18,7 @@ A retrieval-augmented research assistant that autonomously investigates complex 
 | **Phase 8** | Database run tracking (`research_runs`, `agent_steps`, `tool_calls`, `revisions`) | ✅ Complete |
 | **Phase 9** | FastAPI production interface (`POST /research`, `GET /research/{run_id}`) | ✅ Complete |
 | **Phase 10** | Polish & Evaluation (empirical metrics, setup documentation, clean-restart test, test suite) | ✅ Complete |
+| **Phase 11** | React + TypeScript + Vite production workstation (TanStack Query, Tailwind, responsive) | ✅ Complete |
 
 ---
 
@@ -159,6 +160,28 @@ curl http://localhost:8000/research/1
 ```
 
 Once complete, the endpoint returns the report breakdown, per-section citations, and status (`approved`, `partial`, or `insufficient_evidence`).
+ 
+### 3.6 Starting the Frontend Web Application
+
+InsightForge includes a production-ready React + TypeScript + Vite research workstation located in `frontend/`.
+
+```bash
+# 1. Navigate to the frontend directory
+cd frontend
+
+# 2. Install dependencies
+npm install
+
+# 3. Launch the development server
+npm run dev
+```
+
+The application will be accessible at `http://localhost:5173/`. In development mode, Vite automatically proxies API requests (`/research`, `/health`) to `http://localhost:8000`.
+
+To run frontend automated tests:
+```bash
+npm test
+```
 
 ---
 

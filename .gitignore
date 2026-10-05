@@ -24,3 +24,8 @@ kb_chunks_pre_hnsw.dump
 *.sql
 *.dump
 eval_runs_output.json
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
